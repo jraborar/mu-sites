@@ -3,6 +3,7 @@ import type {
 } from '@/lib/types'
 import {
   currentWindowTarget, computeNextOccurrence, isoWeekMonday, getManilaMonthDay,
+  parseAnchor, weekTarget,
 } from '@/lib/cadence'
 import { fmtWeekRange, monthLabel } from '@/lib/format'
 
@@ -86,6 +87,21 @@ function windowTargets(sched: StagingSchedule, anchor: string | null | undefined
     const probe = new Date(now.getTime() - k * WEEK_MS)
     const target = currentWindowTarget(sched, anchor, probe)
     if (target) byIso.set(target.toISOString(), target)
+  }
+
+  // The anchor's OWN ISO week is a completed on-cadence window, but for weekly/biweekly
+  // currentWindowTarget skips it: parityAnchor treats last_deployment as `fromCompletion`
+  // and requires a full interval before the NEXT due window (span 0 is excluded). That's
+  // right for "what's next" but wrong for the projection — it drops the very run that
+  // produced the current anchor into the ad-hoc bucket. Add that week back explicitly so
+  // it shows as its cadence card. Monthly/bimonthly don't use the completion skip, so
+  // their anchor week is already covered by the probe loop above.
+  if (anchor && (sched.cadence === 'weekly' || sched.cadence === 'biweekly') && sched.day_of_week != null) {
+    const anchorMon = isoWeekMonday(parseAnchor(anchor))
+    if (anchorMon.getTime() >= now.getTime() - LOOKBACK_WEEKS * WEEK_MS && anchorMon.getTime() <= now.getTime()) {
+      const target = weekTarget(anchorMon, sched.day_of_week)
+      byIso.set(target.toISOString(), target)
+    }
   }
 
   // Future occurrences.

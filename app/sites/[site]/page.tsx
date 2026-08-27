@@ -114,12 +114,24 @@ export default async function SitePage({ params }: { params: Promise<{ site: str
   )
 }
 
+// Compact cadence prefix: W (weekly), BW (biweekly), M (monthly), BM (bimonthly),
+// C (once / custom / anything else).
+function weekPrefix(cadence: string): string {
+  switch (cadence) {
+    case 'weekly':               return 'W'
+    case 'biweekly':             return 'BW'
+    case 'monthly':              return 'M'
+    case 'bimonthly-week-of-15': return 'BM'
+    default:                     return 'C'
+  }
+}
+
 function cardTitle(card: Card): string {
   if (card.kind === 'unscheduled-upstream') {
     return `${card.monthLabel} · Core Security Update${card.runsInWeek > 1 ? 's' : ''}`
   }
   if (card.kind === 'adhoc') return 'Ad-hoc run'
-  return `${card.monthLabel} · Week ${card.weekOfMonth} of ${card.weeksInMonth}`
+  return `${card.monthLabel} · ${weekPrefix(card.cadence)}: ${card.weekOfMonth} of ${card.weeksInMonth}`
 }
 
 function CardRow({ card }: { card: Card }) {

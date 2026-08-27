@@ -1,0 +1,4 @@
+# Every change to mu-sites requires review from the designated gatekeeper.
+# Combined with branch protection on `main` (require_code_owner_reviews + enforce_admins),
+# no PR can merge without an approving review from jasper100777.
+* @jasper100777

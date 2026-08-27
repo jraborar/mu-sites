@@ -193,11 +193,13 @@ function deployForRun(
 const isTestRun = (r: StagingRecord) => /-t$/i.test(r.multidev)
 
 // Choose the one run that best represents a cadence week. "Dig into each run": a completed
-// run that actually deployed to the destination, on a canonical (non-test) multidev, wins —
-// a stray -t test run or a bare re-run never does. A run that applied a core/upstream update
-// INSIDE its on-cadence ISO week is that week's regular run: the security fast-track lane
-// fires off-week, so a genuine standalone Core Security event lands in a NON-cadence week and
-// is rendered by the ad-hoc pass below. We therefore never split a run out of its own week.
+// run that actually deployed to the destination wins. A -t test run NEVER represents a week —
+// test runs are excluded outright, so a week whose only runs are test runs has no
+// representative run (it renders as unstaged, while runsInWeek still counts the attempts).
+// A run that applied a core/upstream update INSIDE its on-cadence ISO week is that week's
+// regular run: the security fast-track lane fires off-week, so a genuine standalone Core
+// Security event lands in a NON-cadence week and is rendered by the ad-hoc pass below. We
+// therefore never split a run out of its own week.
 function selectWeekRun(
   runs: StagingRecord[],
   deployments: DeploymentRecord[],
@@ -205,7 +207,8 @@ function selectWeekRun(
   start: number,
   end: number,
 ): StagingRecord | null {
-  if (!runs.length) return null
+  const real = runs.filter(r => !isTestRun(r))
+  if (!real.length) return null
   const deployed = (r: StagingRecord) => {
     const d = deployForRun(r, deployments, dest, start, end)
     return !!d && d.status === 'completed' && d.destination === dest
@@ -213,9 +216,8 @@ function selectWeekRun(
   const score = (r: StagingRecord) =>
     (r.status === 'completed' ? 1000 : 0) +
     (deployed(r) ? 100 : 0) +            // the run that reached live owns the week
-    (isTestRun(r) ? 0 : 10) +            // a -t test run never beats a canonical run
     t(r.started_at) / 1e15               // recency tiebreak
-  return runs.slice().sort((a, b) => score(b) - score(a))[0]
+  return real.slice().sort((a, b) => score(b) - score(a))[0]
 }
 
 function classify(

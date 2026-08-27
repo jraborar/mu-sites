@@ -5,9 +5,9 @@ import type { StagingSchedule } from '@/lib/types'
 //
 // ⚠️ COPY of mu-wp-staging/lib/cadence.ts — this is the source of truth for window
 // math and mu-sites must compute windows identically. The ONLY deltas from the
-// original are (1) the import path above (@/lib/types) and (2) `isoWeekMonday` +
-// `getManilaMonthDay` are exported here so lib/cards.ts can reuse them. Re-sync on
-// any cadence change upstream.
+// original are (1) the import path above (@/lib/types) and (2) `isoWeekMonday`,
+// `getManilaMonthDay`, `parseAnchor` and `weekTarget` are exported here so
+// lib/cards.ts can reuse them. Re-sync on any cadence change upstream.
 
 function getManilaDate(date: Date): Date {
   const str = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(date)
@@ -97,7 +97,7 @@ function addWeeks(monday: Date, weeks: number): Date {
   return new Date(monday.getTime() + weeks * WEEK_MS)
 }
 
-function parseAnchor(value: string): Date {
+export function parseAnchor(value: string): Date {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00+08:00`) : new Date(value)
 }
 
@@ -109,7 +109,7 @@ function intervalWeeks(cadence: StagingSchedule['cadence']): number | null {
   return cadence === 'weekly' ? 1 : cadence === 'biweekly' ? 2 : null
 }
 
-function weekTarget(monday: Date, dayOfWeek: number): Date {
+export function weekTarget(monday: Date, dayOfWeek: number): Date {
   return atStagingHour(addDays(monday, dayOfWeek === 0 ? 6 : dayOfWeek - 1))
 }
 

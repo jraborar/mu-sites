@@ -27,10 +27,18 @@ export type CardStatus =
   | 'missed'         // window closed with no staging run
   | 'upcoming'       // window hasn't been reached yet
 
+// A card's "kind": on-cadence maintenance, a generic off-cadence run, or an off-cadence
+// run that applied a core/upstream update (the security fast-track lane in mu-wp-staging,
+// which fires off-week only). `staging_history` has NO flag for this — it's inferred from
+// off-cadence placement + upstream_updated. See docs/mu-sites-unscheduled-upstream-card-pr.md.
+export type CardKind = 'cadence' | 'adhoc' | 'unscheduled-upstream'
+
 export interface Card {
   key: string
   cadence: string
+  kind: CardKind
   adHoc: boolean               // a run outside any on-cadence window (manual / fast-track)
+  upstreamOnly: boolean        // run applied core/upstream with NO plugin/theme/dep changes
   monthLabel: string           // "August 2026"
   weekOfMonth: number          // 1-based within the month (0 for ad-hoc)
   weeksInMonth: number         // 0 for ad-hoc
@@ -55,6 +63,14 @@ export interface CardTimeline {
 const t = (iso: string) => new Date(iso).getTime()
 const inWindow = (iso: string | null | undefined, start: number, end: number) =>
   !!iso && t(iso) >= start && t(iso) < end
+
+// A run that applied core/upstream and nothing else — the strong "pure Core Security
+// Update" signal (the fast-track lane sets skipPluginsThemes:true upstream of us).
+const isUpstreamOnly = (r: StagingRecord | null): boolean =>
+  !!r?.upstream_updated &&
+  !(r.plugins_updated?.length) &&
+  !(r.themes_updated?.length) &&
+  !(r.composer_deps_updated?.length)
 
 function primarySchedule(schedules: StagingSchedule[]): StagingSchedule | null {
   return schedules.find(s => s.active && s.cadence !== 'security-only') ?? null
@@ -159,7 +175,9 @@ export function buildCards(
       cards.push({
         key: target.toISOString(),
         cadence: sched.cadence,
+        kind: 'cadence',
         adHoc: false,
+        upstreamOnly: isUpstreamOnly(run),
         monthLabel: monthLabel(target),
         weekOfMonth: 0,
         weeksInMonth: 0,
@@ -220,10 +238,16 @@ export function buildCards(
     const deploy = deployForRun(run, deployments, dest, windowStart, windowEnd)
     const deployInWindow = !!deploy && inWindow(deploy.completed_at ?? deploy.started_at, windowStart, windowEnd)
 
+    // Off-cadence run that applied a core/upstream update = an unscheduled Core Security
+    // Update; otherwise a generic manual (plugins/themes) ad-hoc run.
+    const kind: CardKind = run.upstream_updated ? 'unscheduled-upstream' : 'adhoc'
+
     cards.push({
       key: `adhoc-${wk}`,
-      cadence: 'ad-hoc',
+      cadence: kind === 'unscheduled-upstream' ? 'unscheduled-upstream' : 'ad-hoc',
+      kind,
       adHoc: true,
+      upstreamOnly: isUpstreamOnly(run),
       monthLabel: monthLabel(mon),
       weekOfMonth: 0,
       weeksInMonth: 0,

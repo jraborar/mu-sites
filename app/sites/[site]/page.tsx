@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink } from 'lucide-react'
+import { ArrowLeft, ExternalLink, ShieldAlert } from 'lucide-react'
 import Header from '@/app/components/Header'
 import {
   getSite, getSchedulesForSite, getStagingForSite,
@@ -23,7 +23,14 @@ const STATUS: Record<CardStatus, { label: string; cls: string }> = {
 
 function updateSummary(s: StagingRecord): string {
   const parts: string[] = []
-  if (s.upstream_updated) parts.push(`upstream ${s.upstream_old_version ?? '?'} → ${s.upstream_new_version ?? '?'}`)
+  if (s.upstream_updated) {
+    // Version strings are frequently placeholder "0000" in staging_history — only show a
+    // delta when both are real, else state the core update generically.
+    const o = s.upstream_old_version
+    const n = s.upstream_new_version
+    const realVersions = o && n && o !== '0000' && n !== '0000'
+    parts.push(realVersions ? `core ${o} → ${n}` : 'core security update')
+  }
   const p = s.plugins_updated?.length ?? 0
   const th = s.themes_updated?.length ?? 0
   const c = s.composer_deps_updated?.length ?? 0
@@ -107,18 +114,32 @@ export default async function SitePage({ params }: { params: Promise<{ site: str
   )
 }
 
+function cardTitle(card: Card): string {
+  if (card.kind === 'unscheduled-upstream') {
+    return `${card.monthLabel} · Core Security Update${card.runsInWeek > 1 ? 's' : ''}`
+  }
+  if (card.kind === 'adhoc') return 'Ad-hoc run'
+  return `${card.monthLabel} · Week ${card.weekOfMonth} of ${card.weeksInMonth}`
+}
+
 function CardRow({ card }: { card: Card }) {
   const s = STATUS[card.status]
   const deploy = card.deploy
   const staging = card.staging
   const vrt = card.vrt
+  const isUpstream = card.kind === 'unscheduled-upstream'
 
   return (
-    <div className="animate-fade-in rounded-lg border border-pantheon-border bg-pantheon-bg-card p-4">
+    <div
+      className={`animate-fade-in rounded-lg border bg-pantheon-bg-card p-4 ${
+        isUpstream ? 'border-pantheon-info/40' : 'border-pantheon-border'
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${s.cls}`}>{s.label}</span>
-        <span className="font-medium text-white">
-          {card.adHoc ? 'Ad-hoc run' : `${card.monthLabel} · Week ${card.weekOfMonth} of ${card.weeksInMonth}`}
+        <span className="flex items-center gap-1.5 font-medium text-white">
+          {isUpstream && <ShieldAlert className="h-4 w-4 shrink-0 text-pantheon-info" />}
+          {cardTitle(card)}
         </span>
         <span className="text-sm text-slate-400">{card.weekRange}</span>
         {card.runsInWeek > 1 && (
@@ -126,7 +147,7 @@ function CardRow({ card }: { card: Card }) {
             +{card.runsInWeek - 1} run{card.runsInWeek - 1 > 1 ? 's' : ''}
           </span>
         )}
-        {!card.adHoc && (
+        {card.kind === 'cadence' && (
           <span className="ml-auto text-xs text-slate-500">target {fmtDateTime(card.target)}</span>
         )}
       </div>

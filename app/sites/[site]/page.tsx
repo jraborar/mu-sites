@@ -19,6 +19,8 @@ const STATUS: Record<CardStatus, { label: string; cls: string }> = {
   'due':           { label: 'Due now',              cls: 'text-pantheon-info border-pantheon-info/40 bg-pantheon-info/10' },
   'missed':        { label: 'Missed',               cls: 'text-pantheon-error border-pantheon-error/40 bg-pantheon-error/10' },
   'upcoming':      { label: 'Upcoming',             cls: 'text-slate-400 border-slate-600/50 bg-slate-700/20' },
+  'staging':       { label: 'Staging…',             cls: 'text-pantheon-info border-pantheon-info/40 bg-pantheon-info/10 animate-pulse' },
+  'deploying':     { label: 'Deploying…',           cls: 'text-pantheon-yellow border-pantheon-yellow/40 bg-pantheon-yellow/10 animate-pulse' },
 }
 
 function updateSummary(s: StagingRecord): string {
@@ -130,7 +132,8 @@ function cardTitle(card: Card): string {
   if (card.kind === 'unscheduled-upstream') {
     return `${card.monthLabel} · Core Security Update${card.runsInWeek > 1 ? 's' : ''}`
   }
-  if (card.kind === 'adhoc') return 'Ad-hoc run'
+  // A deploy-only card (live deploy with no staging row) has no run to call "ad-hoc".
+  if (card.kind === 'adhoc') return card.staging ? 'Ad-hoc run' : `${card.monthLabel} · Deployment`
   return `${card.monthLabel} · ${weekPrefix(card.cadence)}: ${card.weekOfMonth} of ${card.weeksInMonth}`
 }
 
@@ -139,16 +142,31 @@ function CardRow({ card }: { card: Card }) {
   const deploy = card.deploy
   const staging = card.staging
   const vrt = card.vrt
+  const live = card.activity
   const isUpstream = card.kind === 'unscheduled-upstream'
 
   return (
     <div
       className={`animate-fade-in rounded-lg border bg-pantheon-bg-card p-4 ${
-        isUpstream ? 'border-pantheon-info/40' : 'border-pantheon-border'
+        live ? 'border-pantheon-yellow/50' : isUpstream ? 'border-pantheon-info/40' : 'border-pantheon-border'
       }`}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${s.cls}`}>{s.label}</span>
+        {live ? (
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold ${
+              live.kind === 'deploy'
+                ? 'border-pantheon-yellow/40 bg-pantheon-yellow/10 text-pantheon-yellow'
+                : 'border-pantheon-info/40 bg-pantheon-info/10 text-pantheon-info'
+            }`}
+          >
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+            {live.kind === 'deploy' ? 'Deploying' : 'Staging'}
+            {live.status === 'paused' ? ' (paused)' : '…'}
+          </span>
+        ) : (
+          <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${s.cls}`}>{s.label}</span>
+        )}
         <span className="flex items-center gap-1.5 font-medium text-white">
           {isUpstream && <ShieldAlert className="h-4 w-4 shrink-0 text-pantheon-info" />}
           {cardTitle(card)}
@@ -163,6 +181,12 @@ function CardRow({ card }: { card: Card }) {
           <span className="ml-auto text-xs text-slate-500">target {fmtDateTime(card.target)}</span>
         )}
       </div>
+
+      {live && (
+        <div className="mt-2 text-xs text-slate-400">
+          {live.kind === 'deploy' ? `→ ${live.ref}` : live.ref} · started {fmtDateTime(live.startedAt)}
+        </div>
+      )}
 
       <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
         <Field label="Staging">

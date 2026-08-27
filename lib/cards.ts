@@ -192,40 +192,32 @@ function deployForRun(
 // canonical scheduled multidev (mu-YYMMDD). One must never win a week's cadence card.
 const isTestRun = (r: StagingRecord) => /-t$/i.test(r.multidev)
 
-// Choose the run that best represents a cadence week, plus the completed upstream runs on
-// OTHER multidevs that should split out into their own dated "Core Security Update" cards.
-// "Dig into each run": a completed run that actually deployed to the destination, on a
-// canonical (non-test) multidev, wins — a stray -t test run or a bare re-run never does.
-// A completed upstream run on a DIFFERENT multidev is a separate core-security event, so it
-// is left UNCLAIMED (its id in splitIds) for the ad-hoc pass to render as its own card.
-function selectWeekRuns(
+// Choose the one run that best represents a cadence week. "Dig into each run": a completed
+// run that actually deployed to the destination wins. A -t test run NEVER represents a week —
+// test runs are excluded outright, so a week whose only runs are test runs has no
+// representative run (it renders as unstaged, while runsInWeek still counts the attempts).
+// A run that applied a core/upstream update INSIDE its on-cadence ISO week is that week's
+// regular run: the security fast-track lane fires off-week, so a genuine standalone Core
+// Security event lands in a NON-cadence week and is rendered by the ad-hoc pass below. We
+// therefore never split a run out of its own week.
+function selectWeekRun(
   runs: StagingRecord[],
   deployments: DeploymentRecord[],
   dest: string,
   start: number,
   end: number,
-): { primary: StagingRecord | null; splitIds: Set<string> } {
-  if (!runs.length) return { primary: null, splitIds: new Set<string>() }
+): StagingRecord | null {
+  const real = runs.filter(r => !isTestRun(r))
+  if (!real.length) return null
   const deployed = (r: StagingRecord) => {
     const d = deployForRun(r, deployments, dest, start, end)
     return !!d && d.status === 'completed' && d.destination === dest
   }
   const score = (r: StagingRecord) =>
     (r.status === 'completed' ? 1000 : 0) +
-    (deployed(r) ? 100 : 0) +
-    (isTestRun(r) ? 0 : 10) +            // a -t test run never beats a canonical run
+    (deployed(r) ? 100 : 0) +            // the run that reached live owns the week
     t(r.started_at) / 1e15               // recency tiebreak
-  // Anchor the Week card on a NON-upstream run when one exists, so a same-week core-security
-  // (upstream) run on another multidev can split out into its own dated card. Only when every
-  // run that week is upstream (a single core-security event) does the Week card take one.
-  const nonUpstream = runs.filter(r => !r.upstream_updated)
-  const primary = (nonUpstream.length ? nonUpstream : runs).slice().sort((a, b) => score(b) - score(a))[0]
-  const splitIds = new Set(
-    runs
-      .filter(r => r.status === 'completed' && r.upstream_updated && r.multidev !== primary.multidev)
-      .map(r => r.id),
-  )
-  return { primary, splitIds }
+  return real.slice().sort((a, b) => score(b) - score(a))[0]
 }
 
 function classify(
@@ -280,16 +272,11 @@ export function buildCards(
 
       const runsThisWeek = staging
         .filter(s => inWindow(s.started_at, windowStart, windowEnd))
-        .sort((a, b) => {
-          const c = Number(b.status === 'completed') - Number(a.status === 'completed')
-          return c !== 0 ? c : t(b.started_at) - t(a.started_at)
-        })
-      // Pick the run that owns this week (deployed canonical beats a -t test run), and
-      // split completed upstream runs on OTHER multidevs out into their own dated cards by
-      // leaving them unclaimed for the ad-hoc pass below.
-      const { primary: run, splitIds } = selectWeekRuns(runsThisWeek, deployments, dest, windowStart, windowEnd)
-      const claimed = runsThisWeek.filter(r => !splitIds.has(r.id))
-      claimed.forEach(r => used.add(r.id))
+      // The one run that owns this week (deployed canonical beats a -t test run). Every run
+      // in an on-cadence week — core-security runs included — belongs to that week's card, so
+      // all are claimed and counted in the runsInWeek badge; none split into a separate card.
+      const run = selectWeekRun(runsThisWeek, deployments, dest, windowStart, windowEnd)
+      runsThisWeek.forEach(r => used.add(r.id))
 
       const deploy = deployForRun(run, deployments, dest, windowStart, windowEnd)
       const deployInWindow = !!deploy && inWindow(deploy.completed_at ?? deploy.started_at, windowStart, windowEnd)
@@ -315,7 +302,7 @@ export function buildCards(
         status: classify(run, deploy, deployInWindow, reached, closed, activity),
         activity,
         onTime: !!deploy && deploy.status === 'completed' && deployInWindow,
-        runsInWeek: claimed.length,
+        runsInWeek: runsThisWeek.length,
         staging: run,
         deploy,
         vrt: run ? { status: run.vrt_status, flagged: run.vrt_flagged_count, url: run.vrt_report_url } : null,

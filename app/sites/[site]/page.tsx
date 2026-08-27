@@ -144,6 +144,9 @@ function CardRow({ card }: { card: Card }) {
   const vrt = card.vrt
   const live = card.activity
   const isUpstream = card.kind === 'unscheduled-upstream'
+  // Runs beyond the one shown. When nothing is staged (e.g. a week whose only runs were
+  // test runs), no primary run is displayed, so count them all rather than subtracting one.
+  const extraRuns = staging ? card.runsInWeek - 1 : card.runsInWeek
 
   return (
     <div
@@ -172,9 +175,9 @@ function CardRow({ card }: { card: Card }) {
           {cardTitle(card)}
         </span>
         <span className="text-sm text-slate-400">{card.weekRange}</span>
-        {card.runsInWeek > 1 && (
+        {extraRuns > 0 && (
           <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-xs text-slate-400">
-            +{card.runsInWeek - 1} run{card.runsInWeek - 1 > 1 ? 's' : ''}
+            {staging ? '+' : ''}{extraRuns} run{extraRuns > 1 ? 's' : ''}
           </span>
         )}
         {card.kind === 'cadence' && (

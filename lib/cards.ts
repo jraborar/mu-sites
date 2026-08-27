@@ -78,7 +78,15 @@ function primarySchedule(schedules: StagingSchedule[]): StagingSchedule | null {
 }
 
 // All on-cadence window targets across the visible range (past → future), deduped.
-function windowTargets(sched: StagingSchedule, anchor: string | null | undefined, now: Date): Date[] {
+// `floorMs` bounds the backfill: never synthesize a past cadence week (which would render
+// as a "missed" card) before the site's first real activity — weeks with no history at all
+// aren't misses, the site just wasn't being tracked yet.
+function windowTargets(
+  sched: StagingSchedule,
+  anchor: string | null | undefined,
+  now: Date,
+  floorMs: number,
+): Date[] {
   const byIso = new Map<string, Date>()
 
   // Past + current: probe each of the last N ISO weeks (Manila has no DST, so
@@ -89,17 +97,21 @@ function windowTargets(sched: StagingSchedule, anchor: string | null | undefined
     if (target) byIso.set(target.toISOString(), target)
   }
 
-  // The anchor's OWN ISO week is a completed on-cadence window, but for weekly/biweekly
-  // currentWindowTarget skips it: parityAnchor treats last_deployment as `fromCompletion`
-  // and requires a full interval before the NEXT due window (span 0 is excluded). That's
-  // right for "what's next" but wrong for the projection — it drops the very run that
-  // produced the current anchor into the ad-hoc bucket. Add that week back explicitly so
-  // it shows as its cadence card. Monthly/bimonthly don't use the completion skip, so
-  // their anchor week is already covered by the probe loop above.
-  if (anchor && (sched.cadence === 'weekly' || sched.cadence === 'biweekly') && sched.day_of_week != null) {
+  // currentWindowTarget's completion-parity rule only projects FORWARD from the anchor
+  // (last_deployment): it treats last_deployment as `fromCompletion` and requires a full
+  // interval before the next due window, so PAST on-cadence weeks for weekly/biweekly are
+  // excluded (span < interval) and wrongly land in the ad-hoc bucket. That's right for
+  // "what's next" but wrong for a timeline. Add every on-parity week from the lookback
+  // horizon up to (and including) the anchor week back explicitly, so each shows as its
+  // own "Week N of M" cadence card. Monthly/bimonthly have no completion skip — the probe
+  // loop above already surfaces their past windows.
+  const intervalWks = sched.cadence === 'weekly' ? 1 : sched.cadence === 'biweekly' ? 2 : 0
+  if (anchor && intervalWks && sched.day_of_week != null) {
     const anchorMon = isoWeekMonday(parseAnchor(anchor))
-    if (anchorMon.getTime() >= now.getTime() - LOOKBACK_WEEKS * WEEK_MS && anchorMon.getTime() <= now.getTime()) {
-      const target = weekTarget(anchorMon, sched.day_of_week)
+    const floorMon = isoWeekMonday(new Date(floorMs)).getTime()
+    const horizon = Math.max(now.getTime() - LOOKBACK_WEEKS * WEEK_MS, floorMon)
+    for (let mon = anchorMon.getTime(); mon >= horizon; mon -= intervalWks * WEEK_MS) {
+      const target = weekTarget(new Date(mon), sched.day_of_week)
       byIso.set(target.toISOString(), target)
     }
   }
@@ -136,6 +148,46 @@ function deployForRun(
   return candidates.slice().sort((a, b) => score(b) - score(a))[0] ?? null
 }
 
+// Test multidevs carry a `-t` suffix (mu-YYMMDD-t) — a deliberate test run, not the
+// canonical scheduled multidev (mu-YYMMDD). One must never win a week's cadence card.
+const isTestRun = (r: StagingRecord) => /-t$/i.test(r.multidev)
+
+// Choose the run that best represents a cadence week, plus the completed upstream runs on
+// OTHER multidevs that should split out into their own dated "Core Security Update" cards.
+// "Dig into each run": a completed run that actually deployed to the destination, on a
+// canonical (non-test) multidev, wins — a stray -t test run or a bare re-run never does.
+// A completed upstream run on a DIFFERENT multidev is a separate core-security event, so it
+// is left UNCLAIMED (its id in splitIds) for the ad-hoc pass to render as its own card.
+function selectWeekRuns(
+  runs: StagingRecord[],
+  deployments: DeploymentRecord[],
+  dest: string,
+  start: number,
+  end: number,
+): { primary: StagingRecord | null; splitIds: Set<string> } {
+  if (!runs.length) return { primary: null, splitIds: new Set<string>() }
+  const deployed = (r: StagingRecord) => {
+    const d = deployForRun(r, deployments, dest, start, end)
+    return !!d && d.status === 'completed' && d.destination === dest
+  }
+  const score = (r: StagingRecord) =>
+    (r.status === 'completed' ? 1000 : 0) +
+    (deployed(r) ? 100 : 0) +
+    (isTestRun(r) ? 0 : 10) +            // a -t test run never beats a canonical run
+    t(r.started_at) / 1e15               // recency tiebreak
+  // Anchor the Week card on a NON-upstream run when one exists, so a same-week core-security
+  // (upstream) run on another multidev can split out into its own dated card. Only when every
+  // run that week is upstream (a single core-security event) does the Week card take one.
+  const nonUpstream = runs.filter(r => !r.upstream_updated)
+  const primary = (nonUpstream.length ? nonUpstream : runs).slice().sort((a, b) => score(b) - score(a))[0]
+  const splitIds = new Set(
+    runs
+      .filter(r => r.status === 'completed' && r.upstream_updated && r.multidev !== primary.multidev)
+      .map(r => r.id),
+  )
+  return { primary, splitIds }
+}
+
 function classify(
   staging: StagingRecord | null,
   deploy: DeploymentRecord | null,
@@ -162,8 +214,16 @@ export function buildCards(
   const used = new Set<string>()
   const cards: Card[] = []
 
+  // Earliest real activity: past cadence weeks before this aren't "missed", they predate
+  // the site's tracked history. Falls back to `now` (no past backfill) when there's none.
+  const activityTimes = [
+    ...staging.map(s => t(s.started_at)),
+    ...deployments.map(d => t(d.started_at)),
+  ].filter(Number.isFinite)
+  const activityFloor = activityTimes.length ? Math.min(...activityTimes) : now.getTime()
+
   if (sched) {
-    for (const target of windowTargets(sched, site.last_deployment, now)) {
+    for (const target of windowTargets(sched, site.last_deployment, now, activityFloor)) {
       const mon = isoWeekMonday(target)
       const windowStart = mon.getTime()
       const windowEnd = windowStart + WEEK_MS
@@ -178,8 +238,12 @@ export function buildCards(
           const c = Number(b.status === 'completed') - Number(a.status === 'completed')
           return c !== 0 ? c : t(b.started_at) - t(a.started_at)
         })
-      const run = runsThisWeek[0] ?? null
-      if (run) runsThisWeek.forEach(r => used.add(r.id))
+      // Pick the run that owns this week (deployed canonical beats a -t test run), and
+      // split completed upstream runs on OTHER multidevs out into their own dated cards by
+      // leaving them unclaimed for the ad-hoc pass below.
+      const { primary: run, splitIds } = selectWeekRuns(runsThisWeek, deployments, dest, windowStart, windowEnd)
+      const claimed = runsThisWeek.filter(r => !splitIds.has(r.id))
+      claimed.forEach(r => used.add(r.id))
 
       const deploy = deployForRun(run, deployments, dest, windowStart, windowEnd)
       const deployInWindow = !!deploy && inWindow(deploy.completed_at ?? deploy.started_at, windowStart, windowEnd)
@@ -203,7 +267,7 @@ export function buildCards(
         windowEnd: new Date(windowEnd).toISOString(),
         status: classify(run, deploy, deployInWindow, reached, closed),
         onTime: !!deploy && deploy.status === 'completed' && deployInWindow,
-        runsInWeek: runsThisWeek.length,
+        runsInWeek: claimed.length,
         staging: run,
         deploy,
         vrt: run ? { status: run.vrt_status, flagged: run.vrt_flagged_count, url: run.vrt_report_url } : null,
@@ -255,8 +319,9 @@ export function buildCards(
     const deployInWindow = !!deploy && inWindow(deploy.completed_at ?? deploy.started_at, windowStart, windowEnd)
 
     // Off-cadence run that applied a core/upstream update = an unscheduled Core Security
-    // Update; otherwise a generic manual (plugins/themes) ad-hoc run.
-    const kind: CardKind = run.upstream_updated ? 'unscheduled-upstream' : 'adhoc'
+    // Update; otherwise a generic manual (plugins/themes) ad-hoc run. Test against ANY run
+    // in the group so a multidev with mixed upstream/non-upstream rows still labels core.
+    const kind: CardKind = runs.some(r => r.upstream_updated) ? 'unscheduled-upstream' : 'adhoc'
 
     cards.push({
       key: `adhoc-${wk}`,

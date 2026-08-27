@@ -27,6 +27,19 @@ export type CardStatus =
   | 'due'            // current window, target passed, nothing staged yet
   | 'missed'         // window closed with no staging run
   | 'upcoming'       // window hasn't been reached yet
+  | 'staging'        // a staging run is running/paused right NOW (live)
+  | 'deploying'      // a deploy is running/paused right NOW (live)
+
+// The single in-flight process to render on a card, computed independently of the settled
+// outcome. `null` when nothing in the window is live. A running/paused DEPLOY is preferred
+// over a running/paused STAGING run (deploy is the later stage). See docs/mu-sites-live-
+// activity-card-pr.md.
+export interface Activity {
+  kind: 'staging' | 'deploy'
+  status: 'running' | 'paused'
+  startedAt: string            // ISO — drives ISO-week placement and elapsed time
+  ref: string                  // multidev (staging) or destination (deploy), for the chip
+}
 
 // A card's "kind": on-cadence maintenance, a generic off-cadence run, or an off-cadence
 // run that applied a core/upstream update (the security fast-track lane in mu-wp-staging,
@@ -48,6 +61,7 @@ export interface Card {
   windowStart: string          // Monday 00:00 PHT (ISO)
   windowEnd: string            // following Monday 00:00 PHT (ISO, exclusive)
   status: CardStatus
+  activity: Activity | null    // in-flight process (running/paused) to render live; else null
   onTime: boolean
   runsInWeek: number           // total staging runs that fell in this window (≥1 when staged)
   staging: StagingRecord | null
@@ -64,6 +78,32 @@ export interface CardTimeline {
 const t = (iso: string) => new Date(iso).getTime()
 const inWindow = (iso: string | null | undefined, start: number, end: number) =>
   !!iso && t(iso) >= start && t(iso) < end
+
+// "Live" = a process still in flight. `paused` is live too (a paused run/deploy is not idle).
+const LIVE = new Set(['running', 'paused'])
+
+// The in-flight deploy for a window: a running/paused deploy linked to one of the week's runs
+// (by multidev) OR whose own start falls in the window. Most-recent first.
+function liveDeployInWindow(
+  runs: StagingRecord[], deployments: DeploymentRecord[], start: number, end: number,
+): DeploymentRecord | null {
+  const mds = new Set(runs.map(r => r.multidev))
+  const cands = deployments.filter(d =>
+    LIVE.has(d.status) && (mds.has(d.source) || inWindow(d.started_at, start, end)))
+  return cands.slice().sort((a, b) => t(b.started_at) - t(a.started_at))[0] ?? null
+}
+
+// The single process to render as live for a window: a running/paused deploy wins over a
+// running/paused staging run (deploy is the later stage), else the most-recent live run.
+function activityFor(
+  runs: StagingRecord[], deployments: DeploymentRecord[], start: number, end: number,
+): Activity | null {
+  const d = liveDeployInWindow(runs, deployments, start, end)
+  if (d) return { kind: 'deploy', status: d.status as 'running' | 'paused', startedAt: d.started_at, ref: d.destination }
+  const r = runs.filter(x => LIVE.has(x.status)).sort((a, b) => t(b.started_at) - t(a.started_at))[0]
+  if (r) return { kind: 'staging', status: r.status as 'running' | 'paused', startedAt: r.started_at, ref: r.multidev }
+  return null
+}
 
 // A run that applied core/upstream and nothing else — the strong "pure Core Security
 // Update" signal (the fast-track lane sets skipPluginsThemes:true upstream of us).
@@ -142,9 +182,15 @@ function classify(
   deployInWindow: boolean,
   reached: boolean,
   closed: boolean,
+  activity: Activity | null,
 ): CardStatus {
+  // A completed deploy is the settled outcome and wins. Otherwise a live process in this
+  // window drives the status (deploying > staging) so an active week never reads as idle;
+  // only then do we fall back to the completed-staging / upcoming / due / missed ladder.
   if (deploy && deploy.status === 'completed') return deployInWindow ? 'on-time' : 'deployed-late'
+  if (activity?.kind === 'deploy') return 'deploying'
   if (staging && staging.status === 'completed') return closed ? 'staged' : 'in-progress'
+  if (activity?.kind === 'staging') return 'staging'
   if (!reached) return 'upcoming'
   return closed ? 'missed' : 'due'
 }
@@ -183,6 +229,7 @@ export function buildCards(
 
       const deploy = deployForRun(run, deployments, dest, windowStart, windowEnd)
       const deployInWindow = !!deploy && inWindow(deploy.completed_at ?? deploy.started_at, windowStart, windowEnd)
+      const activity = activityFor(runsThisWeek, deployments, windowStart, windowEnd)
 
       const booked = scheduled.find(s =>
         (run && s.source === run.multidev) || inWindow(s.scheduled_for, windowStart, windowEnd),
@@ -201,7 +248,8 @@ export function buildCards(
         target: target.toISOString(),
         windowStart: mon.toISOString(),
         windowEnd: new Date(windowEnd).toISOString(),
-        status: classify(run, deploy, deployInWindow, reached, closed),
+        status: classify(run, deploy, deployInWindow, reached, closed, activity),
+        activity,
         onTime: !!deploy && deploy.status === 'completed' && deployInWindow,
         runsInWeek: runsThisWeek.length,
         staging: run,
@@ -253,6 +301,7 @@ export function buildCards(
     const fri = new Date(windowStart + 4 * DAY_MS)
     const deploy = deployForRun(run, deployments, dest, windowStart, windowEnd)
     const deployInWindow = !!deploy && inWindow(deploy.completed_at ?? deploy.started_at, windowStart, windowEnd)
+    const activity = activityFor(runs, deployments, windowStart, windowEnd)
 
     // Off-cadence run that applied a core/upstream update = an unscheduled Core Security
     // Update; otherwise a generic manual (plugins/themes) ad-hoc run.
@@ -271,12 +320,58 @@ export function buildCards(
       target: run.started_at,
       windowStart: mon.toISOString(),
       windowEnd: new Date(windowEnd).toISOString(),
-      status: classify(run, deploy, deployInWindow, true, true),
+      status: classify(run, deploy, deployInWindow, true, true, activity),
+      activity,
       onTime: !!deploy && deploy.status === 'completed' && deployInWindow,
       runsInWeek: runs.length,
       staging: run,
       deploy,
       vrt: { status: run.vrt_status, flagged: run.vrt_flagged_count, url: run.vrt_report_url },
+      booked: null,
+    })
+  }
+
+  // Deploy-only live activity: a running/paused deploy whose ISO week produced NO card at all
+  // (no cadence window and no unclaimed staging run) still needs to surface — otherwise a
+  // deployment with no matching staging row would be invisible. A live deploy in a week that
+  // already has a card is handled there via activityFor(), so those are skipped here.
+  const representedWeeks = new Set(cards.map(c => c.windowStart))
+  const liveDeployWeeks = new Map<string, DeploymentRecord[]>()
+  for (const d of deployments) {
+    if (!LIVE.has(d.status)) continue
+    if (t(d.started_at) < adhocCutoff) continue
+    const wk = isoWeekMonday(new Date(d.started_at)).toISOString()
+    if (representedWeeks.has(wk)) continue
+    if (!liveDeployWeeks.has(wk)) liveDeployWeeks.set(wk, [])
+    liveDeployWeeks.get(wk)!.push(d)
+  }
+  for (const [wk, deploys] of liveDeployWeeks) {
+    deploys.sort((a, b) => t(b.started_at) - t(a.started_at))
+    const d = deploys[0]
+    const mon = new Date(wk)
+    const windowStart = mon.getTime()
+    const windowEnd = windowStart + WEEK_MS
+    const fri = new Date(windowStart + 4 * DAY_MS)
+    cards.push({
+      key: `deploy-${wk}`,
+      cadence: 'deploy',
+      kind: 'adhoc',
+      adHoc: true,
+      upstreamOnly: false,
+      monthLabel: monthLabel(mon),
+      weekOfMonth: 0,
+      weeksInMonth: 0,
+      weekRange: fmtWeekRange(mon, fri),
+      target: d.started_at,
+      windowStart: mon.toISOString(),
+      windowEnd: new Date(windowEnd).toISOString(),
+      status: 'deploying',
+      activity: { kind: 'deploy', status: d.status as 'running' | 'paused', startedAt: d.started_at, ref: d.destination },
+      onTime: false,
+      runsInWeek: 0,
+      staging: null,
+      deploy: d,
+      vrt: null,
       booked: null,
     })
   }

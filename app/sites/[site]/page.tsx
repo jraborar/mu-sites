@@ -18,7 +18,7 @@ const STATUS: Record<CardStatus, { label: string; cls: string }> = {
   'staged':        { label: 'Staged, not deployed', cls: 'text-pantheon-warning border-pantheon-warning/40 bg-pantheon-warning/10' },
   'due':           { label: 'Due now',              cls: 'text-pantheon-info border-pantheon-info/40 bg-pantheon-info/10' },
   'missed':        { label: 'Missed',               cls: 'text-pantheon-error border-pantheon-error/40 bg-pantheon-error/10' },
-  'upcoming':      { label: 'Upcoming',             cls: 'text-slate-400 border-slate-600/50 bg-slate-700/20' },
+  'upcoming':      { label: 'Upcoming',             cls: 'text-pantheon-text-muted border-pantheon-border-hi/50 bg-pantheon-bg-elevated/20' },
   'staging':       { label: 'Staging…',             cls: 'text-pantheon-info border-pantheon-info/40 bg-pantheon-info/10 animate-pulse' },
   'deploying':     { label: 'Deploying…',           cls: 'text-pantheon-yellow border-pantheon-yellow/40 bg-pantheon-yellow/10 animate-pulse' },
 }
@@ -51,7 +51,7 @@ export default async function SitePage({ params }: { params: Promise<{ site: str
     return (
       <main className="mx-auto max-w-5xl px-6 py-8">
         <Header current="sites" />
-        <p className="mt-8 text-sm text-slate-400">
+        <p className="mt-8 text-sm text-pantheon-text-muted">
           No site found for <code className="font-mono">{uuid}</code>.{' '}
           <Link href="/" className="text-pantheon-yellow hover:underline">Back to all sites</Link>
         </p>
@@ -74,40 +74,40 @@ export default async function SitePage({ params }: { params: Promise<{ site: str
     <main className="mx-auto max-w-5xl px-6 py-8">
       <Header current="sites" />
 
-      <Link href="/" className="mt-6 inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
+      <Link href="/" className="mt-6 inline-flex items-center gap-1 text-sm text-pantheon-text-muted hover:text-pantheon-text">
         <ArrowLeft className="h-4 w-4" /> All sites
       </Link>
 
       <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-xl font-bold text-white">{site.machine_name || site.site_name || site.site}</h2>
+        <h2 className="text-xl font-bold text-pantheon-text">{site.machine_name || site.site_name || site.site}</h2>
         {site.site_name && site.site_name !== site.machine_name && (
-          <span className="text-slate-400">{site.site_name}</span>
+          <span className="text-pantheon-text-muted">{site.site_name}</span>
         )}
       </div>
-      <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
-        <span className="rounded bg-slate-700/60 px-2 py-0.5">{site.platform}</span>
-        <span className="rounded bg-slate-700/60 px-2 py-0.5">
+      <div className="mt-1 flex flex-wrap gap-2 text-xs text-pantheon-text-muted">
+        <span className="rounded bg-pantheon-bg-elevated/60 px-2 py-0.5">{site.platform}</span>
+        <span className="rounded bg-pantheon-bg-elevated/60 px-2 py-0.5">
           cadence: {sched ? sched.cadence : 'none'}
         </span>
-        <span className="rounded bg-slate-700/60 px-2 py-0.5">→ {site.deploy_destination} · {site.deploy_approval}</span>
+        <span className="rounded bg-pantheon-bg-elevated/60 px-2 py-0.5">→ {site.deploy_destination} · {site.deploy_approval}</span>
         {site.paused_at && (
           <span className="rounded bg-pantheon-warning/15 px-2 py-0.5 text-pantheon-warning">
             paused{site.paused_until ? ` until ${fmtDate(site.paused_until)}` : ''}
           </span>
         )}
-        <span className="rounded bg-slate-700/60 px-2 py-0.5">anchor: {fmtDate(site.last_deployment)}</span>
+        <span className="rounded bg-pantheon-bg-elevated/60 px-2 py-0.5">anchor: {fmtDate(site.last_deployment)}</span>
       </div>
 
       <div className="mt-6 space-y-3">
         {cards.length === 0 && (
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-pantheon-text-muted">
             No schedule and no run history for this site yet.
           </p>
         )}
         {cards.map(card => <CardRow key={card.key} card={card} />)}
 
         {omittedRuns > 0 && (
-          <p className="pt-1 text-center text-xs text-slate-500">
+          <p className="pt-1 text-center text-xs text-pantheon-text-dim">
             + {omittedRuns} older run{omittedRuns > 1 ? 's' : ''} not shown
           </p>
         )}
@@ -170,23 +170,23 @@ function CardRow({ card }: { card: Card }) {
         ) : (
           <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${s.cls}`}>{s.label}</span>
         )}
-        <span className="flex items-center gap-1.5 font-medium text-white">
+        <span className="flex items-center gap-1.5 font-medium text-pantheon-text">
           {isUpstream && <ShieldAlert className="h-4 w-4 shrink-0 text-pantheon-info" />}
           {cardTitle(card)}
         </span>
-        <span className="text-sm text-slate-400">{card.weekRange}</span>
+        <span className="text-sm text-pantheon-text-muted">{card.weekRange}</span>
         {extraRuns > 0 && (
-          <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-xs text-slate-400">
+          <span className="rounded bg-pantheon-bg-elevated/60 px-1.5 py-0.5 text-xs text-pantheon-text-muted">
             {staging ? '+' : ''}{extraRuns} run{extraRuns > 1 ? 's' : ''}
           </span>
         )}
         {card.kind === 'cadence' && (
-          <span className="ml-auto text-xs text-slate-500">target {fmtDateTime(card.target)}</span>
+          <span className="ml-auto text-xs text-pantheon-text-dim">target {fmtDateTime(card.target)}</span>
         )}
       </div>
 
       {live && (
-        <div className="mt-2 text-xs text-slate-400">
+        <div className="mt-2 text-xs text-pantheon-text-muted">
           {live.kind === 'deploy' ? `→ ${live.ref}` : live.ref} · started {fmtDateTime(live.startedAt)}
         </div>
       )}
@@ -195,27 +195,27 @@ function CardRow({ card }: { card: Card }) {
         <Field label="Staging">
           {staging ? (
             <>
-              <div className="text-slate-200">{updateSummary(staging)}</div>
-              <div className="text-xs text-slate-500">
+              <div className="text-pantheon-text">{updateSummary(staging)}</div>
+              <div className="text-xs text-pantheon-text-dim">
                 {staging.multidev} · {fmtDateTime(staging.started_at)}
                 {staging.status !== 'completed' && ` · ${staging.status}`}
               </div>
             </>
-          ) : <span className="text-slate-500">not staged</span>}
+          ) : <span className="text-pantheon-text-dim">not staged</span>}
         </Field>
 
         <Field label="Deploy">
           {deploy ? (
             <>
-              <div className="text-slate-200">→ {deploy.destination} · {deploy.status}</div>
-              <div className="text-xs text-slate-500">{fmtDateTime(deploy.completed_at ?? deploy.started_at)}</div>
+              <div className="text-pantheon-text">→ {deploy.destination} · {deploy.status}</div>
+              <div className="text-xs text-pantheon-text-dim">{fmtDateTime(deploy.completed_at ?? deploy.started_at)}</div>
             </>
           ) : card.booked ? (
             <>
               <div className="text-pantheon-info">booked → {card.booked.destination}</div>
-              <div className="text-xs text-slate-500">{fmtDateTime(card.booked.scheduled_for)}</div>
+              <div className="text-xs text-pantheon-text-dim">{fmtDateTime(card.booked.scheduled_for)}</div>
             </>
-          ) : <span className="text-slate-500">—</span>}
+          ) : <span className="text-pantheon-text-dim">—</span>}
         </Field>
 
         <Field label="VRT">
@@ -232,8 +232,8 @@ function CardRow({ card }: { card: Card }) {
                 {(vrt.flagged ?? 0) > 0 ? `${vrt.flagged} flagged` : 'clean'}
                 <ExternalLink className="h-3 w-3" />
               </a>
-            ) : <span className="text-slate-300">{vrt.status}</span>
-          ) : <span className="text-slate-500">—</span>}
+            ) : <span className="text-pantheon-text">{vrt.status}</span>
+          ) : <span className="text-pantheon-text-dim">—</span>}
         </Field>
       </div>
     </div>
@@ -243,7 +243,7 @@ function CardRow({ card }: { card: Card }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-pantheon-text-dim">{label}</div>
       <div className="mt-0.5">{children}</div>
     </div>
   )

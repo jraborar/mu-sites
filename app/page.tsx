@@ -37,7 +37,7 @@ export default async function HomePage() {
         {paused.length > 0 && <Section title="Paused" sites={paused} dim />}
         {inactive.length > 0 && <Section title="Inactive" sites={inactive} dim />}
         {configured && sites.length === 0 && (
-          <p className="text-sm text-slate-400">No sites in the registry.</p>
+          <p className="text-sm text-pantheon-text-muted">No sites in the registry.</p>
         )}
       </div>
     </main>
@@ -54,31 +54,31 @@ function Section({
   if (sites.length === 0) return null
   return (
     <section>
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-pantheon-text-dim">
         {title} · {sites.length}
       </h2>
-      <div className="divide-y divide-slate-700/50 overflow-hidden rounded-lg border border-pantheon-border bg-pantheon-bg-card">
+      <div className="divide-y divide-pantheon-border/50 overflow-hidden rounded-lg border border-pantheon-border bg-pantheon-bg-card">
         {sites.map(s => (
           <Link
             key={s.site}
             href={`/sites/${encodeURIComponent(s.site)}`}
-            className={`flex items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-800 ${dim ? 'opacity-60' : ''}`}
+            className={`flex items-center gap-3 px-4 py-3 transition-colors hover:bg-pantheon-bg-card ${dim ? 'opacity-60' : ''}`}
           >
             <div className="min-w-0 flex-1">
-              <div className="truncate font-medium text-white">
+              <div className="truncate font-medium text-pantheon-text">
                 {s.machine_name || s.site_name || s.site}
               </div>
               {s.site_name && s.site_name !== s.machine_name && (
-                <div className="truncate text-sm text-slate-400">{s.site_name}</div>
+                <div className="truncate text-sm text-pantheon-text-muted">{s.site_name}</div>
               )}
             </div>
-            <span className="rounded bg-slate-700/60 px-2 py-0.5 text-xs text-slate-300">
+            <span className="rounded bg-pantheon-bg-elevated/60 px-2 py-0.5 text-xs text-pantheon-text">
               {PLATFORM_LABEL[s.platform] ?? s.platform}
             </span>
-            <span className="hidden text-xs text-slate-500 sm:inline">
+            <span className="hidden text-xs text-pantheon-text-dim sm:inline">
               last deploy {fmtDate(s.last_deployment)}
             </span>
-            <ChevronRight className="h-4 w-4 shrink-0 text-slate-600" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-pantheon-text-dim" />
           </Link>
         ))}
       </div>

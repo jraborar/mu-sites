@@ -79,6 +79,37 @@ export async function getDeploymentsForSite(keys: string[], limit = 200): Promis
   return data ?? []
 }
 
+export type ActiveProcess = {
+  kind: 'staging' | 'deploy'
+  status: 'running' | 'paused'
+  ref: string   // multidev name (staging) or destination env (deploy)
+}
+
+// Returns a map of site key → active process for the home-page highlight.
+// Keyed by whatever identifier the row uses (UUID or machine-name) so callers
+// must check both site.site and site.machine_name when looking up a match.
+// Deploy beats staging when both are active (later stage wins, mirrors cards.ts).
+export async function getActiveProcesses(): Promise<Map<string, ActiveProcess>> {
+  const db = getClient()
+  if (!db) return new Map()
+  const [{ data: staging }, { data: deploy }] = await Promise.all([
+    db.from('staging_history')
+      .select('site, multidev, status')
+      .in('status', ['running', 'paused']),
+    db.from('deployment_history')
+      .select('site, destination, status')
+      .in('status', ['running', 'paused']),
+  ])
+  const map = new Map<string, ActiveProcess>()
+  for (const s of staging ?? []) {
+    map.set(s.site, { kind: 'staging', status: s.status, ref: s.multidev ?? '' })
+  }
+  for (const d of deploy ?? []) {
+    map.set(d.site, { kind: 'deploy', status: d.status, ref: d.destination ?? '' })
+  }
+  return map
+}
+
 export async function getScheduledDeploymentsForSite(keys: string[]): Promise<ScheduledDeployment[]> {
   const db = getClient()
   if (!db) return []
